@@ -1,0 +1,72 @@
+version: "2"
+services:
+  zookeeper:
+    image: ${DEFAULT_DOCKER_REPO}/confluentinc/cp-zookeeper:latest
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - 22181:2181
+    healthcheck:
+      test: nc -z localhost 2181 || exit -1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  kafka:
+    image: ${DEFAULT_DOCKER_REPO}/confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+    ports:
+      - 29092:29092
+      - 29094:29094
+    env_file:
+      - ".env"
+    healthcheck:
+      test: kafka-topics --bootstrap-server kafka:29092 --list
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  schemaregistry:
+    image: ${DEFAULT_DOCKER_REPO}/confluentinc/cp-schema-registry:latest
+    hostname: schemaregistry
+    depends_on:
+      - kafka
+    ports:
+      - 8085:8085
+    env_file:
+      - ".env"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--output",
+          "/dev/null",
+          "--silent",
+          "--head",
+          "--fail",
+          "http://schemaregistry:8085/subjects"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  init-kafka:
+    image: ${DEFAULT_DOCKER_REPO}/confluentinc/cp-kafka:latest
+    depends_on:
+      schemaregistry:
+        condition: service_healthy
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: |
+      "
+      # blocks until kafka is reachable
+      kafka-topics --bootstrap-server kafka:29092 --list
+
+      echo -e 'Creating kafka topics'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trade-topic --replication-factor 1 --partitions 1
+
+      echo -e 'Successfully created the following topics:'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
